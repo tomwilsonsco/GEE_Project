@@ -1,0 +1,29 @@
+var fc = ee.FeatureCollection("users/tomw_ee/Inputs/sampleAll");
+var s1c = ee.ImageCollection('COPERNICUS/S1_GRD')
+        .filter(ee.Filter.eq('transmitterReceiverPolarisation', ['VV', 'VH']))
+        .filter(ee.Filter.eq('instrumentMode', 'IW'))
+        .filterDate('2018-08-01', '2018-08-31')
+        .filterBounds(fc);
+        
+var s1img = s1c.median();
+
+var results = s1img.select("VV", "VH").reduceRegions(fc, ee.Reducer.toCollection(["VV", "VH"]),10);
+
+results = results.map(function(f) {
+  return ee.FeatureCollection(f.get("features")).map(function(g) {
+    // Propagate the uniqueid and region values into all the extracted values.
+    return g.set(f.select(["REGION_COD", "TYPE"]).toDictionary());
+  });
+});
+
+results = results.flatten();
+
+var outputCols =['REGION_COD','TYPE','VV','VH']
+
+Export.table.toDrive({
+  collection: results,
+  folder: 'exportedEEResults',
+  description: 's1DistributionAllSamples',
+ fileFormat: 'CSV',
+ selectors: outputCols
+});

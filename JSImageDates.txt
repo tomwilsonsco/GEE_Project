@@ -1,0 +1,47 @@
+//Export a list of dates of images in collection for point of interest
+//Note: Dates are not always distinct
+
+//set point of interest
+var ptoi = ee.Geometry.Point([-3.1372, 55.6696]);
+Map.addLayer(ptoi,{},'ptoi');
+Map.centerObject(ptoi, 15);
+
+//change collection type of interest
+//var coll = ee.ImageCollection('COPERNICUS/S2').filterBounds(ptoi).sort("system:time_start");
+var coll = ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(ptoi).sort("system:time_start").filterDate('2016-01-01', '2018-12-31');
+//var coll = ee.ImageCollection('LANDSAT/LC08/C01/T1_TOA').filterBounds(ptoi).sort("system:time_start");
+
+print(coll.first())
+
+// Empty list for results
+var ls = ee.List([]);
+
+var getDates = function(img, ls){
+  var dateshort = img.date().format('dd-MM-yyyy');
+  var orbit = img.get('orbitProperties_pass');
+  var platform = img.get('platform_number');
+  return ee.List(ls).add([dateshort,orbit]);
+};
+
+var reslist = coll.iterate(getDates, ls);
+
+var resm = ee.List(reslist);
+
+var fc = ee.FeatureCollection(resm.map(function(list) {
+    var list = ee.List(list);
+    var dict = {
+        dateval: list.get(0),
+        orbit: list.get(1)
+    };
+    return ee.Feature(null, dict);
+    
+}));
+
+print(fc.first())
+
+Export.table.toDrive({
+  collection: fc,
+  description: 'dates_export_s1',
+  fileFormat: 'CSV',
+  folder: 'exportedEEResults'
+});

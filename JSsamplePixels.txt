@@ -1,0 +1,110 @@
+//Javascript code to be used in GEE
+
+var sample = ee.FeatureCollection("users/tomw_ee/Inputs/sampleAll"),
+    gb = /* color: #ffc82d */ee.Geometry.Polygon(
+        [[[-5.9818234014290965, 49.20393006882016],
+          [-1.8509640264290965, 50.254902484203726],
+          [0.9615359735709035, 50.50710886706466],
+          [2.3238406610709035, 51.63912907814136],
+          [2.2798953485709035, 53.0352396854271],
+          [-0.22498746392909652, 55.09783224805366],
+          [-1.1917843389290965, 56.16449182262005],
+          [-1.4115109014290965, 56.843539000169535],
+          [-1.4554562139290965, 57.79264940760132],
+          [-1.9388546514290965, 59.103207409122966],
+          [-1.9827999639290965, 59.41767351275969],
+          [-3.6087765264290965, 59.3505321037876],
+          [-5.5423702764290965, 58.87680758903082],
+          [-7.4320187139290965, 58.78583041729239],
+          [-8.091198401429097, 56.65076556305119],
+          [-6.6849484014290965, 55.49812310690235],
+          [-5.4105343389290965, 54.92143299845388],
+          [-4.7952999639290965, 53.92437039696089],
+          [-5.2347530889290965, 52.42316447220345],
+          [-6.1576046514290965, 51.775289161974264]]]);
+
+var start = ee.Date('2016-10-01');
+var end = ee.Date('2018-10-01');
+
+
+var months = end.difference(start, 'month');
+var dateList = ee.List.sequence(0, months.int()).map(function(count) {
+  return start.advance(count, 'month');
+});
+
+dateList = dateList.remove(end);
+
+// Remove ugly edges
+function maskEdge(img) {
+  var mask = img.select(0).unitScale(-25, 5).multiply(255).toByte().connectedComponents(ee.Kernel.rectangle(1,1), 100);
+  return img.updateMask(mask.select(0));  
+}
+
+function maskLowEntropy(image) { 
+  var bad = image.select(0).multiply(10000).toInt().entropy(ee.Kernel.circle(5)).lt(3.2);
+  return image.updateMask(image.mask().multiply(bad.focal_max(5).not()));
+} 
+
+
+var s1c = ee.ImageCollection('COPERNICUS/S1_GRD')
+        .filter(ee.Filter.eq('transmitterReceiverPolarisation', ['VV', 'VH']))
+        .filter(ee.Filter.eq('instrumentMode', 'IW'))
+        .filterDate(start, end)
+        .filterBounds(gb)
+        .map(maskLowEntropy)
+        .select(['VV','VH']);
+
+
+
+///////Conversion functions
+function toNatural(img) {
+  return ee.Image(10.0).pow(img.divide(10.0));
+}
+
+function toDB(img) {
+  return ee.Image(img).log10().multiply(10.0);
+}
+
+////////////////////////////////////////////////////////////////
+
+
+//Get monthly mean of values below 25th percentile
+var coll = ee.ImageCollection.fromImages(dateList.map(function (m){
+  m = ee.Date(m);
+  var c = s1c.filterDate(m, m.advance(1, 'month'));
+  ///Create percentiles
+  var imgp25 = c.reduce(ee.Reducer.percentile([25])).select(['VV_p25','VH_p25'],['VV','VH']);
+
+  c = c.map(function (img){
+  var check = img.lte(imgp25);
+  return img.updateMask(check); 
+  });
+
+  c = c.map(toNatural);
+  var img = c.mean();
+  img = toDB(img);
+  img = img.addBands(img.select('VV').subtract(img.select('VH')).select([0], ['Ratio']));
+
+  return img.select(['VV','VH','Ratio']).set('date', m.format('M-y'));
+}));
+
+
+var fcFinal = coll.map(function (img){
+var init= img.reduceRegions(sample, ee.Reducer.median(),10);
+return init.map(function(f){return f.set('date', img.get('date'))});
+});
+
+fcFinal = fcFinal.flatten();
+
+
+var outputCols =['REGION_COD','TYPE','VV','VH','Ratio','date'];
+
+Export.table.toDrive({
+  collection: fcFinal,
+  folder: 'exportedEEResults',
+  description: 's1Monthly1stQuartileAllSamples',
+ fileFormat: 'CSV',
+ selectors: outputCols
+});
+
+//Map.addLayer(coll.first(), {bands:['VV'], min:-25, max:0},'test');
